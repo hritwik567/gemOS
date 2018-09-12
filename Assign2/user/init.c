@@ -126,8 +126,8 @@ static int main()
               write("FAILED\n", 7);
 
   *(ptr + 8192) = 'A';   /*Page fault will occur and handled successfully*/
-  *(ptr + 8193) = 'A';
-  write(ptr+8192,2);
+  //*(ptr + 8193) = 'A';
+  //write(ptr+8192,2);
   ptr1 = (char *) shrink(7, MAP_WR);
   *ptr = 'A';          /*Page fault will occur and handled successfully*/
 

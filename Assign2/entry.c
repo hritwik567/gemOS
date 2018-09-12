@@ -253,7 +253,7 @@ extern void handle_page_fault(void) {
             printf("Wrong Virtual Address in Read Only Data Segment, Exiting ...\n");
             do_exit();
         }
-        if((u64)(error & 2)==1){
+        if((u64)(error & 2)==2){
             printf("*PAGE FAULT* \n RIP [%x] | Accessed Virtual Address [%x] | Error Code [%x]\n", urip, fva, error);
             printf("Trying to write in Read Only Data Segment, Exiting ...\n");
             do_exit();
