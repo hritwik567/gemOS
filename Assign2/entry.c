@@ -124,16 +124,20 @@ u64 do_syscall(int syscall, u64 param1, u64 param2, u64 param3, u64 param4) {
                     if((u32)(*(omap(current->pgd)+l)&1)!=0){
                         os_ptp = ((*(omap(current->pgd)+l) << SHIFT) >> SHIFT*2);
                         l = (p & L3_MASK) >> L3_SHIFT;
+                        //printf("l4 off %x l3 page %x\n",l, os_ptp);
                         if((u32)(*(omap(os_ptp)+l)&1)!=0){
                             os_ptp = ((*(omap(os_ptp)+l) << SHIFT) >> SHIFT*2);
                             l = (p & L2_MASK) >> L2_SHIFT;
+                            //printf("l3 off %x l2 page %x\n",l, os_ptp);
                             if((u32)(*(omap(os_ptp)+l)&1)!=0){
                                 os_ptp = ((*(omap(os_ptp)+l) << SHIFT) >> SHIFT*2);
                                 l = (p & L1_MASK) >> L1_SHIFT;
+                                //printf("l2 off %x l1 page %x\n",l, os_ptp);
                                 if((u32)(*(omap(os_ptp)+l)&1)!=0){
                                     os_page = ((*(omap(os_ptp)+l) << SHIFT) >> SHIFT*2);
                                     *(omap(os_ptp)+l) = 0x0;
                                     os_pfn_free(USER_REG, os_page);
+                                    //printf("%x\n",os_page);
                                     asm volatile ("invlpg (%0);" ::"r" (p) :"memory");
                                 }
                             }
@@ -203,7 +207,7 @@ extern void handle_page_fault(void) {
     u64 urbp = *(orbp);
     u64 error = *(orbp+1);
     u64 urip = *(orbp+2);
-
+    printf("*PAGE FAULT* -----> \n\n\nRIP [%x] | Accessed Virtual Address [%x] | Error Code [%x]\n", urip, fva, error);
     if((u32)(error & 1)==1){
         printf("*PAGE FAULT* \n RIP [%x] | Accessed Virtual Address [%x] | Error Code [%x]\n", urip, fva, error);
         printf("Protection Fault, Exiting ...\n");
@@ -226,7 +230,7 @@ extern void handle_page_fault(void) {
         } else {
             os_ptp_temp = ((*(omap(ctx->pgd)+l) << SHIFT) >> SHIFT*2);
         }
-
+        printf("l4 off %x l3 ptp %x\n",l, os_ptp_temp);
         l = (fva & L3_MASK) >> L3_SHIFT;
         *(omap(os_ptp_temp)+l) |= af<<1;
         if((u32)((*(omap(os_ptp_temp)+l))&1)==0){
@@ -235,7 +239,7 @@ extern void handle_page_fault(void) {
         } else {
             os_ptp = ((*(omap(os_ptp_temp)+l) << SHIFT) >> SHIFT*2);
         }
-
+        printf("l3 off %x l2 ptp %x\n",l, os_ptp);
         l = (fva & L2_MASK) >> L2_SHIFT;
         *(omap(os_ptp)+l) |= af<<1;
         if((u32)(*(omap(os_ptp)+l)&1)==0){
@@ -244,7 +248,7 @@ extern void handle_page_fault(void) {
         } else {
             os_ptp_temp = ((*(omap(os_ptp)+l) << SHIFT) >> SHIFT*2);
         }
-
+        printf("l2 off %x l1 ptp %x\n",l, os_ptp_temp);
         l = (fva & L1_MASK) >> L1_SHIFT;
         *(omap(os_ptp_temp)+l) = (u64)(os_pfn_alloc(USER_REG) << SHIFT) | (IMD_MASK | af<<1);
     } else if(fva >= ctx->mms[MM_SEG_RODATA].start && fva <= ctx->mms[MM_SEG_RODATA].end){

@@ -1,0 +1,142 @@
+diff -Naur old/example/.gdb_history example/.gdb_history
+--- old/example/.gdb_history	1970-01-01 05:30:00.000000000 +0530
++++ example/.gdb_history	2018-11-14 16:01:17.357559424 +0530
+@@ -0,0 +1,3 @@
++q
++attach 3141
++q
+diff -Naur old/example/lib.c example/lib.c
+--- old/example/lib.c	2018-11-08 10:43:23.000000000 +0530
++++ example/lib.c	2018-11-14 15:52:26.317575145 +0530
+@@ -2,6 +2,7 @@
+
+ extern int do_init(struct objfs_state *objfs)
+ {
++   struct stat sb;
+    char *ptr;
+    char buf[1024];
+    ptr = getcwd(buf, 1024);
+@@ -14,12 +15,19 @@
+        return -1;
+    }
+
+-   objfs->blkdev = open("disk.img", O_RDWR | O_SYNC | O_DIRECT);
++   objfs->blkdev = open("disk.img", O_RDWR | O_DIRECT);
+    if(objfs->blkdev < 0){
+        perror("blkdev open");
+        return -1;
+    }
+
++   if(fstat(objfs->blkdev, &sb) < 0){
++       perror("blkdev open");
++       return -1;
++   }
++
++   objfs->disksize = (sb.st_size) >> 12;   // #of blocks
++   printf("diskblocks = %ld\n", objfs->disksize);
+    objfs->logfd = fopen("objfs.log", "w+");
+
+    if(objfs->logfd == NULL){
+diff -Naur old/example/lib.h example/lib.h
+--- old/example/lib.h	2018-11-08 10:43:23.000000000 +0530
++++ example/lib.h	2018-11-14 15:44:06.157589952 +0530
+@@ -30,6 +30,7 @@
+     char *cache;
+     int cachesize;
+     void *objstore_data;
++    long disksize;  //# of blocks
+ };
+
+ extern int do_init(struct objfs_state *objfs);
+@@ -44,8 +45,8 @@
+ extern long release_object(int objid, struct objfs_state *objfs);
+ extern long destroy_object(const char *, struct objfs_state *);
+ extern long rename_object(const char *, const char *, struct objfs_state *);
+-extern long objstore_write(int objid, const char *, int, struct objfs_state *);
+-extern long objstore_read(int objid, char *, int, struct objfs_state *);
+-extern int  fillup_size_details(struct stat *buf);
++extern long objstore_write(int objid, const char *, int, struct objfs_state *, off_t offset);
++extern long objstore_read(int objid, char *, int, struct objfs_state *, off_t offset);
++extern int  fillup_size_details(struct stat *buf, struct objfs_state *);
+
+ #endif
+diff -Naur old/example/Makefile example/Makefile
+--- old/example/Makefile	2018-11-08 11:48:01.000000000 +0530
++++ example/Makefile	2018-11-14 15:41:14.597595031 +0530
+@@ -1,6 +1,6 @@
+ all:objfs
+ CC = gcc
+-CFLAGS  = -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=26 -D_GNU_SOURCE -DDBG -g -Wall
++CFLAGS  = -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=26 -D_GNU_SOURCE -DDBG -g -Wall
+ LDFLAGS = -pthread -lfuse
+ OBJS = objfs.o lib.o objstore.o
+
+diff -Naur old/example/objfs.c example/objfs.c
+--- old/example/objfs.c	2018-11-11 17:52:26.000000000 +0530
++++ example/objfs.c	2018-11-14 16:03:56.789554704 +0530
+@@ -33,7 +33,7 @@
+            if(retval < 0)
+                  return -ENOENT;
+            statbuf->st_ino = retval;
+-           if(fillup_size_details(statbuf) < 0)
++           if(fillup_size_details(statbuf, objfs) < 0)
+                 return -EBADF;
+     }
+     statbuf->st_uid = getuid();
+@@ -98,7 +98,7 @@
+ {
+     int retval;
+     dprintf("%s: key=%s fh=%ld\n", __func__, key, fi->fh);
+-    retval = objstore_read(fi->fh, buf, size, objfs);
++    retval = objstore_read(fi->fh, buf, size, objfs, offset);
+     if(retval < 0)
+          return -EINVAL;
+     return retval;
+@@ -112,7 +112,7 @@
+ {
+     int retval;
+     dprintf("%s: key=%s fh=%ld\n", __func__, key, fi->fh);
+-    retval = objstore_write(fi->fh, buf, size, objfs);
++    retval = objstore_write(fi->fh, buf, size, objfs, offset);
+     if(retval < 0)
+          return -EINVAL;
+     return retval;
+@@ -249,7 +249,7 @@
+
+     printf("%s\n", __func__);
+     retval = fuse_main(argc, argv, &objfs_operations, objfs);
+-    dprintf("fuse main returned %d\n", retval);
++    printf("fuse main returned %d\n", retval);
+
+     return retval;
+ }
+diff -Naur old/example/objstore.c example/objstore.c
+--- old/example/objstore.c	2018-11-11 18:03:42.000000000 +0530
++++ example/objstore.c	2018-11-14 15:34:11.053607570 +0530
+@@ -212,7 +212,7 @@
+   Return value: Success --> #of bytes written
+                 Failure --> -1
+ */
+-long objstore_write(int objid, const char *buf, int size, struct objfs_state *objfs)
++long objstore_write(int objid, const char *buf, int size, struct objfs_state *objfs, off_t offset)
+ {
+    struct object *obj = objs + objid - 2;
+    if(obj->id != objid)
+@@ -231,7 +231,7 @@
+   Return value: Success --> #of bytes written
+                 Failure --> -1
+ */
+-long objstore_read(int objid, char *buf, int size, struct objfs_state *objfs)
++long objstore_read(int objid, char *buf, int size, struct objfs_state *objfs, off_t offset)
+ {
+    struct object *obj = objs + objid - 2;
+    if(objid < 2)
+@@ -249,7 +249,7 @@
+   Fillup buf->st_size and buf->st_blocks correctly
+   See man 2 stat
+ */
+-int fillup_size_details(struct stat *buf)
++int fillup_size_details(struct stat *buf, struct objfs_state *offset)
+ {
+    struct object *obj = objs + buf->st_ino - 2;
+    if(buf->st_ino < 2 || obj->id != buf->st_ino)
